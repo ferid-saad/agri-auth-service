@@ -1,191 +1,178 @@
-# agri-auth-service
+# Accès SSH à la VM Ubuntu depuis la machine physique
 
-Microservice d'authentification du projet **AgriIrrigation**, une application de suivi de l'irrigation agricole à architecture microservices.
+## 1. Environnement
 
-Projet semestriel du Master DevOps & Cloud, ISET Tozeur, année universitaire 2026 / 2027.
+| Élément | Valeur |
+|---|---|
+| Machine physique | Windows *(à compléter : version, ex. Windows 11)* |
+| Hyperviseur | Oracle VirtualBox |
+| VM | Ubuntu 26.04 LTS (noyau 7.0.0-34-generic) |
+| Utilisateur de la VM | `ferid` |
+| Nom d'hôte | `Ubuntu-26` |
+| Adresse IP de la VM | `192.168.100.88` (adaptateur 1, accès par pont) |
 
-## Rôle dans l'architecture
+## 2. Configuration côté VM
 
-AgriIrrigation est composée de trois microservices indépendants, chacun dans son propre dépôt et avec sa propre base de données :
-
-| Service | Rôle | Dépôt |
-|---|---|---|
-| **auth-service** (ce dépôt) | Inscription, connexion, jetons JWT | `agri-auth-service` |
-| irrigation-service | Parcelles, planning d'arrosage, consommation d'eau | `agri-irrigation-service` |
-| reporting-service | Statistiques et historique de consommation | `agri-reporting-service` |
-
-Les manifests Kubernetes de l'ensemble sont dans le dépôt `agri-gitops` (déploiement continu avec ArgoCD).
-
-## Technologies
-
-- Node.js 24 et Express
-- PostgreSQL 16 (base `auth_db`)
-- bcryptjs pour le hachage des mots de passe
-- jsonwebtoken pour les jetons JWT
-- Jest et Supertest pour les tests
-
-## Prérequis
-
-- Git
-- Node.js 18 ou plus récent, et npm
-- Docker (pour PostgreSQL en local)
-
-## Installation
+Installation du serveur SSH :
 
 ```bash
-git clone https://github.com/ferid-saad/agri-auth-service.git
-cd agri-auth-service
-npm install
+sudo apt update
+sudo apt install openssh-server
 ```
 
-## Base de données
-
-Lancer PostgreSQL dans un conteneur Docker (port local 5433) :
+Vérification que le service tourne :
 
 ```bash
-docker run -d --name agri-postgres \
-  -e POSTGRES_USER=agri \
-  -e POSTGRES_PASSWORD=agri123 \
-  -p 5433:5432 \
-  -v agri-pgdata:/var/lib/postgresql/data \
-  postgres:16-alpine
+systemctl status ssh
 ```
 
-Créer les bases de données des trois services :
+Le service doit afficher `active (running)`.
+
+Relevé de l'adresse IP :
 
 ```bash
-docker exec agri-postgres psql -U agri -c "CREATE DATABASE auth_db;"
-docker exec agri-postgres psql -U agri -c "CREATE DATABASE irrigation_db;"
-docker exec agri-postgres psql -U agri -c "CREATE DATABASE reporting_db;"
+ip a
 ```
 
-La table `users` est créée automatiquement au démarrage du service.
+Les clés du serveur (host keys) sont générées automatiquement à l'installation
+dans `/etc/ssh/` (fichiers `ssh_host_*_key` et `ssh_host_*_key.pub`).
 
-> Les identifiants ci-dessus ne servent qu'au développement local. En production, ils sont fournis par un ConfigMap et un Secret Kubernetes.
+## 3. Réseau VirtualBox
 
-## Configuration
+Dans *Configuration → Réseau* de la VM, l'adaptateur 1 est en
+**accès par pont** afin que la VM soit joignable depuis Windows.
+L'adresse `10.0.3.15` (NAT) n'est pas joignable directement depuis la machine physique.
 
-Le service est configuré par variables d'environnement. Les valeurs par défaut conviennent au développement local.
+## 4. Test de connexion depuis la machine physique
 
-| Variable | Description | Valeur par défaut |
-|---|---|---|
-| `PORT` | Port d'écoute du service | `3000` |
-| `DB_HOST` | Hôte PostgreSQL | `localhost` |
-| `DB_PORT` | Port PostgreSQL | `5433` |
-| `DB_USER` | Utilisateur PostgreSQL | `agri` |
-| `DB_PASSWORD` | Mot de passe PostgreSQL | `agri123` |
-| `DB_NAME` | Nom de la base | `auth_db` |
-
-## Lancer le service
-
-```bash
-npm start
-```
-
-Le service écoute sur `http://localhost:3000`.
-
-## API
-
-### `GET /health`
-
-Vérifie que le service est opérationnel (utilisé plus tard par les sondes Kubernetes).
-
-```bash
-curl http://localhost:3000/health
-```
-
-Réponse `200` :
-
-```json
-{ "status": "ok", "service": "auth-service" }
-```
-
-### `POST /register`
-
-Crée un compte utilisateur. Le mot de passe est haché avec bcrypt avant stockage.
-
-Corps de la requête :
-
-```json
-{ "email": "ali@mail.com", "password": "secret123" }
-```
-
-Exemple sous PowerShell :
+Commande exécutée dans PowerShell sous Windows :
 
 ```powershell
-Invoke-RestMethod -Method Post -Uri http://localhost:3000/register -ContentType "application/json" -Body '{"email":"ali@mail.com","password":"secret123"}'
+ssh ferid@192.168.100.88
 ```
 
-Exemple avec curl :
+À la première connexion, l'empreinte du serveur est affichée et acceptée (`yes`).
+Elle est enregistrée dans `C:\Users\<nom>\.ssh\known_hosts`.
+Le mot de passe de `ferid` est ensuite demandé.
+
+Commandes de vérification une fois connecté :
 
 ```bash
-curl -X POST http://localhost:3000/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"ali@mail.com","password":"secret123"}'
+hostname
+whoami
+ip a
 ```
 
-| Code | Signification |
-|---|---|
-| `201` | Compte créé, la réponse contient `id` et `email` |
-| `400` | Email ou mot de passe manquant, ou mot de passe de moins de 6 caractères |
-| `409` | Email déjà utilisé |
-| `500` | Erreur serveur |
+### Capture d'écran
 
-### `POST /login` (à venir)
+![Connexion SSH réussie depuis Windows](images/ssh_test.png)
 
-Connexion et émission d'un jeton JWT (user story SCRUM-21).
+*La capture montre PowerShell sous Windows, la commande `ssh`, puis le prompt
+`ferid@Ubuntu-26:~$` qui confirme la connexion à la VM.*
 
-## Tests
+## 5. Authentification par clé (optionnel)
+
+Génération de la paire de clés sous Windows :
+
+```powershell
+ssh-keygen -t ed25519
+```
+
+Copie de la clé publique vers la VM :
+
+```powershell
+scp $env:USERPROFILE\.ssh\id_ed25519.pub ferid@192.168.100.88:/tmp/key.pub
+```
+
+Ajout de la clé dans la VM :
 
 ```bash
-npm test
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+cat /tmp/key.pub >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+rm /tmp/key.pub
 ```
 
-Les tests couvrent pour l'instant `GET /health` et le refus d'une inscription incomplète.
+### Emplacement des clés
 
-## Sécurité
+| Clé | Machine | Emplacement | Rôle |
+|---|---|---|---|
+| Clé privée utilisateur | Windows | `C:\Users\<nom>\.ssh\id_ed25519` | Signe le défi (reste secrète) |
+| Clé publique utilisateur | VM | `/home/ferid/.ssh/authorized_keys` | Vérifie l'identité de l'utilisateur |
+| Clé privée du serveur | VM | `/etc/ssh/ssh_host_ed25519_key` | Prouve l'identité de la VM |
+| Clé publique du serveur | Windows (empreinte) | `C:\Users\<nom>\.ssh\known_hosts` | Vérifie que l'on parle à la bonne VM |
 
-- Mots de passe hachés avec bcrypt (10 tours de salage), jamais stockés en clair
-- Requêtes SQL paramétrées (protection contre l'injection SQL)
-- Validation des entrées
-- Aucun secret dans le code source du déploiement : mots de passe et clés fournis par variables d'environnement
+## 6. Problèmes rencontrés
 
-## Structure du projet
+- *(à compléter selon votre expérience, par exemple : timeout de connexion résolu
+  en passant l'adaptateur réseau en accès par pont)*
+- Installation des Additions invité VirtualBox : le module `vboxvideo` ne compile pas
+  avec le noyau 7.0 (erreur `DRM_ERROR`), sans impact sur SSH.
 
+## 7. Installation de Docker sur la VM
+
+Méthode officielle : dépôt APT de Docker (Ubuntu 26.04 « resolute » est supporté).
+Les commandes sont exécutées dans la VM (directement ou via SSH).
+
+### 7.1 Supprimer les paquets susceptibles d'entrer en conflit
+
+```bash
+for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
+  sudo apt remove -y $pkg
+done
 ```
-agri-auth-service/
-├── src/
-│   ├── app.js            # Application Express et routes
-│   ├── server.js         # Démarrage du serveur
-│   ├── db.js             # Connexion PostgreSQL et création de la table users
-│   └── routes/
-│       └── auth.js       # Routes d'authentification
-├── tests/
-│   ├── health.test.js
-│   └── register.test.js
-├── package.json
-└── README.md
+
+### 7.2 Ajouter le dépôt officiel Docker
+
+```bash
+sudo apt update
+sudo apt install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+sudo apt update
 ```
 
-## Workflow Git
+### 7.3 Installer Docker Engine
 
-| Branche | Usage |
-|---|---|
-| `main` | Code stable |
-| `develop` | Intégration |
-| `feature/SCRUM-<n>-<description>` | Une branche par ticket Jira |
+```bash
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
 
-Chaque fonctionnalité est intégrée dans `develop` par une pull request relue. Les messages de commit commencent par la clé du ticket Jira, par exemple `SCRUM-9: route POST /register avec hachage bcrypt`.
+### 7.4 Vérifier l'installation
 
-## Avancement
+```bash
+sudo systemctl status docker     # doit afficher "active (running)"
+docker --version
+sudo docker run hello-world
+```
 
-| Ticket | User story | État |
-|---|---|---|
-| SCRUM-9 | Créer un compte | Terminé |
-| SCRUM-21 | Se connecter (JWT) | À faire |
+### 7.5 Utiliser Docker sans `sudo` (optionnel)
 
-Étapes suivantes de la chaîne DevOps : Dockerfile, pipeline CI avec scan Trivy, déploiement Kubernetes, GitOps avec ArgoCD, supervision avec Prometheus et Grafana.
+```bash
+sudo usermod -aG docker $USER
+newgrp docker
+docker run hello-world
+```
 
-## Auteur
+### Capture d'écran
 
-Ferid Saad, Master DevOps & Cloud, ISET Tozeur.
+![Docker installé et test hello-world](images/docker_test.png)
+
+*La capture montre le résultat de `docker --version` et du conteneur `hello-world`
+(message « Hello from Docker! »).*
+
+## 8. Sécurité
+
+- La clé privée (`id_ed25519`) ne doit jamais être partagée ni publiée.
+- Aucun mot de passe ni phrase secrète n'est inclus dans ce document.
